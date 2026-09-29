@@ -1,4 +1,5 @@
 using Attendance.API.Data;
+using Attendance.API.Features.Attendance;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -28,6 +29,8 @@ using (var scope = app.Services.CreateScope())
 app.MapGet("/", () => Results.Ok(new { service = "Attendance API", status = "ready" }))
     .WithName("GetServiceStatus")
     .WithOpenApi();
+
+app.MapAttendanceEndpoints();
 
 app.Run();
 
