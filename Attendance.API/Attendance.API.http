@@ -1,0 +1,31 @@
+@Attendance.API_HostAddress = http://localhost:5253
+
+PUT {{Attendance.API_HostAddress}}/api/schools/1/attendance/2026-09-29
+Content-Type: application/json
+
+{
+  "records": [
+    {
+      "studentId": 1001,
+      "attendanceCode": "A",
+      "minutesLate": 0,
+      "notes": "Reported sick"
+    },
+    {
+      "studentId": 1002,
+      "attendanceCode": "L",
+      "minutesLate": 12,
+      "notes": null
+    }
+  ]
+}
+
+###
+
+GET {{Attendance.API_HostAddress}}/api/students/1001/attendance?schoolYear=2026-2027
+Accept: application/json
+
+###
+
+GET {{Attendance.API_HostAddress}}/api/students/1001/chronic-absence?schoolYear=2026-2027
+Accept: application/json
