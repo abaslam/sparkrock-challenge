@@ -16,6 +16,22 @@ public static class AttendanceEndpoints
             .ProducesValidationProblem()
             .WithOpenApi();
 
+        endpoints.MapGet("/api/students/{studentId:int}/attendance", GetStudentAttendanceAsync)
+            .WithName("GetStudentAttendance")
+            .WithSummary("Retrieve a student's attendance history for a school year")
+            .Produces<StudentAttendanceHistoryResponse>()
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesValidationProblem()
+            .WithOpenApi();
+
+        endpoints.MapGet("/api/students/{studentId:int}/chronic-absence", GetChronicAbsenceStatusAsync)
+            .WithName("GetChronicAbsenceStatus")
+            .WithSummary("Return a student's chronic absenteeism status for a school year")
+            .Produces<ChronicAbsenceStatusResponse>()
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesValidationProblem()
+            .WithOpenApi();
+
         return endpoints;
     }
 
@@ -180,6 +196,109 @@ public static class AttendanceEndpoints
             updated,
             SchoolYear.FromDate(date).ToString()));
     }
+
+    private static async Task<IResult> GetStudentAttendanceAsync(
+        int studentId,
+        string? schoolYear,
+        AttendanceDbContext database,
+        TimeProvider timeProvider,
+        CancellationToken cancellationToken)
+    {
+        var resolvedYear = ResolveSchoolYear(schoolYear, timeProvider);
+        if (resolvedYear is null)
+        {
+            return InvalidSchoolYear();
+        }
+
+        var studentExists = await database.Students
+            .AsNoTracking()
+            .AnyAsync(x => x.Id == studentId, cancellationToken);
+        if (!studentExists)
+        {
+            return StudentNotFound(studentId);
+        }
+
+        var records = await database.AttendanceRecords
+            .AsNoTracking()
+            .Where(x => x.StudentId == studentId &&
+                        x.AttendDate >= resolvedYear.Value.StartDate &&
+                        x.AttendDate <= resolvedYear.Value.EndDate)
+            .OrderByDescending(x => x.AttendDate)
+            .Select(x => new AttendanceHistoryItemResponse(
+                x.AttendDate,
+                x.AttendanceCode,
+                x.AttendanceCodeDescription,
+                x.IsAbsent,
+                x.IsExcused,
+                x.MinutesLate,
+                x.Notes))
+            .ToListAsync(cancellationToken);
+
+        return Results.Ok(new StudentAttendanceHistoryResponse(
+            studentId,
+            resolvedYear.Value.ToString(),
+            records));
+    }
+
+    private static async Task<IResult> GetChronicAbsenceStatusAsync(
+        int studentId,
+        string? schoolYear,
+        AttendanceDbContext database,
+        TimeProvider timeProvider,
+        CancellationToken cancellationToken)
+    {
+        var resolvedYear = ResolveSchoolYear(schoolYear, timeProvider);
+        if (resolvedYear is null)
+        {
+            return InvalidSchoolYear();
+        }
+
+        var student = await database.Students
+            .AsNoTracking()
+            .Where(x => x.Id == studentId)
+            .Select(x => new { x.Id, x.School.AbsenceAlertThreshold })
+            .SingleOrDefaultAsync(cancellationToken);
+        if (student is null)
+        {
+            return StudentNotFound(studentId);
+        }
+
+        var totalAbsences = await database.AttendanceRecords
+            .AsNoTracking()
+            .CountAsync(x => x.StudentId == studentId &&
+                             x.AttendDate >= resolvedYear.Value.StartDate &&
+                             x.AttendDate <= resolvedYear.Value.EndDate &&
+                             x.IsAbsent,
+                cancellationToken);
+
+        return Results.Ok(new ChronicAbsenceStatusResponse(
+            studentId,
+            resolvedYear.Value.ToString(),
+            totalAbsences,
+            student.AbsenceAlertThreshold,
+            totalAbsences >= student.AbsenceAlertThreshold));
+    }
+
+    private static SchoolYear? ResolveSchoolYear(string? value, TimeProvider timeProvider)
+    {
+        if (value is null)
+        {
+            return SchoolYear.FromDate(DateOnly.FromDateTime(timeProvider.GetUtcNow().UtcDateTime));
+        }
+
+        return SchoolYear.TryParse(value, out var schoolYear) ? schoolYear : null;
+    }
+
+    private static IResult InvalidSchoolYear() => Results.ValidationProblem(
+        new Dictionary<string, string[]>
+        {
+            ["schoolYear"] = ["School year must use the format YYYY-YYYY with consecutive years, for example 2026-2027."]
+        });
+
+    private static IResult StudentNotFound(int studentId) => Results.Problem(
+        statusCode: StatusCodes.Status404NotFound,
+        title: "Student not found",
+        detail: $"Student {studentId} does not exist.");
 }
 
 public sealed record SaveDailyAttendanceRequest(IReadOnlyList<AttendanceEntryRequest>? Records);
@@ -195,3 +314,24 @@ public sealed record SaveDailyAttendanceResponse(
     int Created,
     int Updated,
     string SchoolYear);
+
+public sealed record StudentAttendanceHistoryResponse(
+    int StudentId,
+    string SchoolYear,
+    IReadOnlyList<AttendanceHistoryItemResponse> Records);
+
+public sealed record AttendanceHistoryItemResponse(
+    DateOnly Date,
+    string AttendanceCode,
+    string AttendanceCodeDescription,
+    bool IsAbsent,
+    bool IsExcused,
+    int MinutesLate,
+    string? Notes);
+
+public sealed record ChronicAbsenceStatusResponse(
+    int StudentId,
+    string SchoolYear,
+    int TotalAbsences,
+    int Threshold,
+    bool IsChronicallyAbsent);

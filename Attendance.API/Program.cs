@@ -7,6 +7,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddProblemDetails();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddDbContext<AttendanceDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("AttendanceDatabase")));
 
